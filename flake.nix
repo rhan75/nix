@@ -1,120 +1,144 @@
 {
-  description = "Universal configuration for Mac and Linux";
+  description = "Zenful Darwin Nix Configuration";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nix-darwin.url = "github:LnL7/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
-    nix-homebrew.url = "github:zhaofengli/nix-homebrew";
-    # home-manager.url = "github:nix-community/home-manager";
-    # home-manager.inputs.nixpkgs.follows = "nixpkgs";
+    nix-homebrew.url = "github:zhaofengli-wip/nix-homebrew";
   };
 
-  outputs = inputs@{ self, nixpkgs, nix-darwin, nix-homebrew, ... }:
+  outputs = inputs@{ self, nix-darwin, nixpkgs, nix-homebrew }:
   let
-    username = "ryanhan";
 
-    commonPackages = pkgs: with pkgs; [
-      neovim git tmux jq fzf htop
-      coreutils gh wget tree micromamba obsidian alacritty flutter jdk
-      docker discord slack vscode ghidra nmap
-      azure-cli tailscale google-chrome powershell
-    ];
-    commonFonts = pkgs: with pkgs; [
-      noto-fonts-cjk
-      noto-fonts-emoji
-      fira-code
-      fira-code-symbols
-      mplus-outline-fonts.githubRelease
-      dina-font
-      jetbrains-mono
-    ];
-    darwinPackages = pkgs: with pkgs; [
+ #   system = "aarch64-darwin";
 
-    ];
+    configuration = { pkgs, config, ... }: {
 
-    linuxPackages = pkgs: with pkgs; [
-      code-cursor vmware-workstation _1password-gui _1password figma-linux
-    ];
-
-    darwinConfiguration = { pkgs, ... }: {
       nixpkgs.config.allowUnfree = true;
-      environment.systemPackages = commonPackages pkgs ++ darwinPackages pkgs;
-      fonts.packages = commonFonts pkgs;
-      
-      system.stateVersion = 5;
-      # Add this line to enable the Nix daemon
-      services.nix-daemon.enable = true;
+
+      # List packages installed in system profile. To search by name, run:
+      # $ nix-env -qaP | grep wget
+      environment.systemPackages =
+        [
+	  pkgs.neovim
+    pkgs.git
+	  pkgs.obsidian
+	  pkgs.tmux
+	  pkgs.jq
+	  pkgs.fzf
+	  pkgs.htop
+	  pkgs.coreutils
+	  pkgs.gh
+	  pkgs.wget
+	  pkgs.tree
+	  pkgs.micromamba
+	  pkgs.docker
+	  pkgs.ghidra
+	  pkgs.nmap
+	  pkgs.tailscale
+        ];
+
+
       homebrew = {
         enable = true;
-        casks = [
-          "cursor" "anaconda" "iterm2" "notion"
-          "font-hack-nerd-font" "font-fira-code-nerd-font"
-          "figma" "microsoft-teams" "rectangle-pro"
-          "signal" "vmware-fusion" "dotnet-sdk"
-          "1password" "1password-cli"
+        brews = [
+          "mas"
         ];
+        casks = [
+          "cursor"
+          "google-chrome"
+          "notion"
+          "1password"
+	        "1password-cli"
+	        "microsoft-teams"
+	        "rectangle-pro"
+	        "microsoft-outlook"
+	        "figma"
+	        "vmware-fusion"
+	        "font-meslo-lg-nerd-font"
+          "iterm2"
+          "tailscale"
+          "nordvpn"
+        ];
+        masApps = {
+          # "Yoink" = 457622435;
+        };
         onActivation.cleanup = "zap";
       };
-      
-      # ... other Darwin-specific configurations ...
+
+      fonts.packages = 
+        [
+	  pkgs.fira-code
+          #pkgs.hack-font
+          #pkgs.source-code-pro
+          #pkgs.jetbrains-mono
+	];
+      system.activationScripts.applications.text = let
+  	env = pkgs.buildEnv {
+	  name = "system-applications";
+	  paths = config.environment.systemPackages;
+	  pathsToLink = "/Applications";
+  	};
+      in
+  	pkgs.lib.mkForce ''
+  	  # Set up applications.
+  	  echo "setting up /Applications..." >&2
+  	  rm -rf /Applications/Nix\ Apps
+  	  mkdir -p /Applications/Nix\ Apps
+  	  find ${env}/Applications -maxdepth 1 -type l -exec readlink '{}' + |
+  	  while read src; do
+    	    app_name=$(basename "$src")
+    	    echo "copying $src" >&2
+    	    ${pkgs.mkalias}/bin/mkalias "$src" "/Applications/Nix Apps/$app_name"
+  	  done
+        '';
+
+      # Auto upgrade nix package and the daemon service.
+      services.nix-daemon.enable = true;
+      # nix.package = pkgs.nix;
+
+      # Necessary for using flakes on this system.
+      nix.settings.experimental-features = "nix-command flakes";
+
+      # Create /etc/zshrc that loads the nix-darwin environment.
+      programs.zsh.enable = true;  # default shell on catalina
+      # programs.fish.enable = true;
+
+      # Set Git commit hash for darwin-version.
+      system.configurationRevision = self.rev or self.dirtyRev or null;
+
+      # Used for backwards compatibility, please read the changelog before changing.
+      # $ darwin-rebuild changelog
+      system.stateVersion = 5;
+
+      # The platform the configuration will be used on.
+      nixpkgs.hostPlatform = "aarch64-darwin";
     };
-
-    linuxConfiguration = { pkgs, ... }: {
-      nixpkgs.config.allowUnfree = true;
-      environment.systemPackages = commonPackages pkgs ++ linuxPackages pkgs;
-      fonts.packages = commonFonts pkgs;
-      services.flatpak.enable = true;
-      # Add Notion as a Flatpak package
-      # services.flatpak.packages = [
-        # "flathub:app/md.obsidian.Obsidian"
-      # ];
-
-      # ... other Linux-specific configurations ...
-    };
-
   in
   {
-    darwinConfigurations."macos" = nix-darwin.lib.darwinSystem {
-      system = "aarch64-darwin";  # Adjust if needed
+    # Build darwin flake using:
+    # $ darwin-rebuild build --flake .#simple
+    darwinConfigurations."mac" = nix-darwin.lib.darwinSystem {
       modules = [ 
-        darwinConfiguration
+        configuration
         nix-homebrew.darwinModules.nix-homebrew
         {
           nix-homebrew = {
             enable = true;
-            user = username;
+            # Apple Silicon Only
             enableRosetta = true;
+            # User owning the Homebrew prefix
+            user = "biogi";
+
             autoMigrate = true;
           };
         }
-        # home-manager.darwinModules.home-manager
-        # {
-        #   home-manager.useGlobalPkgs = true;
-        #   home-manager.useUserPackages = true;
-        #   home-manager.users.${username} = { ... }: {
-        #     # Add your home-manager configuration here
-        #   };
-        # }
       ];
     };
 
-    nixosConfigurations."linux" = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";  # Adjust this to your Linux system architecture
-      modules = [
-        linuxConfiguration
-        # home-manager.nixosModules.home-manager
-        # {
-        #   home-manager.useGlobalPkgs = true;
-        #   home-manager.useUserPackages = true;
-        #   home-manager.users.${username} = { ... }: {
-        #     # Add your home-manager configuration here
-        #   };
-        # }
-      ];
-    };
 
     # Expose the package set, including overlays, for convenience.
-    darwinPackages = self.darwinConfigurations."macos".pkgs;
+    darwinPackages = self.darwinConfigurations."mini".pkgs;
   };
 }
